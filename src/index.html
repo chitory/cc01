@@ -246,6 +246,31 @@
           spin: 0,
         };
 
+        const powerups = {
+          // Active effects
+          expandUntil: 0,
+          slowUntil: 0,
+          multiballUntil: 0,
+          // Falling items
+          drops: [],
+          // Runtime
+          originalPaddleW: 120,
+        };
+
+        const balls = [
+          {
+            x: 0,
+            y: 0,
+            r: 8,
+            vx: 0,
+            vy: 0,
+            baseSpeed: 520,
+            stuck: true,
+            spin: 0,
+            active: true,
+          },
+        ];
+
         const bricks = {
           cols: 9,
           rows: 6,
@@ -276,6 +301,7 @@
           paddle.y = world.h - world.touchZoneH - 22 * world.scale;
 
           ball.r = clamp(8 * world.scale, 7, 11);
+          for (const b of balls) b.r = ball.r;
           bricks.top = 64 * world.scale;
           bricks.height = clamp(20 * world.scale, 18, 26);
           bricks.gap = clamp(8 * world.scale, 6, 10);
@@ -283,12 +309,16 @@
 
           paddle.x = clamp(paddle.x || world.w / 2, paddle.w / 2 + 8, world.w - paddle.w / 2 - 8);
           paddle.targetX = paddle.x;
-          if (ball.stuck) attachBallToPaddle();
+          if (balls.some((b) => b.active && b.stuck)) attachBallToPaddle();
         }
 
         function attachBallToPaddle() {
-          ball.x = paddle.x;
-          ball.y = paddle.y - paddle.h / 2 - ball.r - 2;
+          for (const b of balls) {
+            if (!b.active) continue;
+            if (!b.stuck) continue;
+            b.x = paddle.x;
+            b.y = paddle.y - paddle.h / 2 - b.r - 2;
+          }
         }
 
         function setHud() {
@@ -305,11 +335,19 @@
         function resetBallAndPaddle() {
           paddle.x = world.w / 2;
           paddle.targetX = paddle.x;
-          ball.vx = 0;
-          ball.vy = 0;
-          ball.spin = 0;
-          ball.stuck = true;
+          for (const b of balls) {
+            b.active = true;
+            b.vx = 0;
+            b.vy = 0;
+            b.spin = 0;
+            b.stuck = true;
+            b.baseSpeed = ball.baseSpeed;
+          }
           state.awaitingRelease = true;
+          powerups.drops = [];
+          powerups.expandUntil = 0;
+          powerups.slowUntil = 0;
+          powerups.multiballUntil = 0;
           attachBallToPaddle();
         }
 
@@ -370,14 +408,18 @@
 
         function releaseBall() {
           if (!state.running) startGameIfNeeded();
-          if (!ball.stuck) return;
-          ball.stuck = false;
-          state.awaitingRelease = false;
-
-          const speed = ball.baseSpeed * (0.82 + 0.04 * Math.min(8, state.level));
-          const angle = rand((-Math.PI * 3) / 4, (-Math.PI * 1) / 4);
-          ball.vx = Math.cos(angle) * speed;
-          ball.vy = Math.sin(angle) * speed;
+          let released = false;
+          for (const b of balls) {
+            if (!b.active) continue;
+            if (!b.stuck) continue;
+            b.stuck = false;
+            released = true;
+            const speed = b.baseSpeed * (0.82 + 0.04 * Math.min(8, state.level));
+            const angle = rand((-Math.PI * 3) / 4, (-Math.PI * 1) / 4);
+            b.vx = Math.cos(angle) * speed;
+            b.vy = Math.sin(angle) * speed;
+          }
+          if (released) state.awaitingRelease = false;
         }
 
         function resetAll() {
@@ -422,54 +464,55 @@
           return alive;
         }
 
-        function reflectBallOnPaddle() {
+        function reflectBallOnPaddle(b) {
           const halfW = paddle.w / 2;
           const left = paddle.x - halfW;
           const right = paddle.x + halfW;
           const top = paddle.y - paddle.h / 2;
           const bottom = paddle.y + paddle.h / 2;
 
-          const nearestX = clamp(ball.x, left, right);
-          const nearestY = clamp(ball.y, top, bottom);
-          const dx = ball.x - nearestX;
-          const dy = ball.y - nearestY;
-          if (dx * dx + dy * dy > ball.r * ball.r) return false;
+          const nearestX = clamp(b.x, left, right);
+          const nearestY = clamp(b.y, top, bottom);
+          const dx = b.x - nearestX;
+          const dy = b.y - nearestY;
+          if (dx * dx + dy * dy > b.r * b.r) return false;
 
-          const hitPos = clamp((ball.x - paddle.x) / halfW, -1, 1);
-          const speed = Math.hypot(ball.vx, ball.vy);
+          const hitPos = clamp((b.x - paddle.x) / halfW, -1, 1);
+          const speed = Math.hypot(b.vx, b.vy);
           const angle = (-Math.PI / 2) + hitPos * (Math.PI * 0.38);
 
           const paddleVel = clamp((paddle.x - paddle.targetX) * 10, -600, 600);
-          ball.spin = clamp(ball.spin + paddleVel * 0.0006, -0.35, 0.35);
+          b.spin = clamp(b.spin + paddleVel * 0.0006, -0.35, 0.35);
 
           const outSpeed = Math.max(300, speed);
-          ball.vx = Math.cos(angle) * outSpeed + paddleVel * 0.22;
-          ball.vy = Math.sin(angle) * outSpeed;
+          b.vx = Math.cos(angle) * outSpeed + paddleVel * 0.22;
+          b.vy = Math.sin(angle) * outSpeed;
 
-          ball.y = top - ball.r - 0.5;
+          b.y = top - b.r - 0.5;
           return true;
         }
 
-        function hitBrick(brick) {
-          const nearestX = clamp(ball.x, brick.x, brick.x + brick.w);
-          const nearestY = clamp(ball.y, brick.y, brick.y + brick.h);
-          const dx = ball.x - nearestX;
-          const dy = ball.y - nearestY;
-          if (dx * dx + dy * dy > ball.r * ball.r) return false;
+        function hitBrick(b, brick) {
+          const nearestX = clamp(b.x, brick.x, brick.x + brick.w);
+          const nearestY = clamp(b.y, brick.y, brick.y + brick.h);
+          const dx = b.x - nearestX;
+          const dy = b.y - nearestY;
+          if (dx * dx + dy * dy > b.r * b.r) return false;
 
-          const overlapX = Math.min(Math.abs(ball.x - brick.x), Math.abs(ball.x - (brick.x + brick.w)));
-          const overlapY = Math.min(Math.abs(ball.y - brick.y), Math.abs(ball.y - (brick.y + brick.h)));
+          const overlapX = Math.min(Math.abs(b.x - brick.x), Math.abs(b.x - (brick.x + brick.w)));
+          const overlapY = Math.min(Math.abs(b.y - brick.y), Math.abs(b.y - (brick.y + brick.h)));
 
           if (overlapX < overlapY) {
-            ball.vx *= -1;
+            b.vx *= -1;
           } else {
-            ball.vy *= -1;
+            b.vy *= -1;
           }
 
           brick.hp -= 1;
           if (brick.hp <= 0) {
             brick.alive = false;
             state.score += 100;
+            maybeSpawnDrop(brick);
           } else {
             state.score += 25;
           }
@@ -477,51 +520,178 @@
           return true;
         }
 
+        function nowMs() {
+          return performance.now();
+        }
+
+        function maybeSpawnDrop(brick) {
+          // Roughly 18% chance to drop an item.
+          if (Math.random() > 0.18) return;
+          const roll = Math.random();
+          const type = roll < 0.42 ? "expand" : roll < 0.78 ? "slow" : roll < 0.92 ? "multiball" : "life";
+          powerups.drops.push({
+            type,
+            x: brick.x + brick.w / 2,
+            y: brick.y + brick.h / 2,
+            vy: 170 * world.scale,
+            r: 10 * world.scale,
+            alive: true,
+          });
+        }
+
+        function applyDrop(type) {
+          const t = nowMs();
+          if (type === "expand") {
+            powerups.expandUntil = Math.max(powerups.expandUntil, t + 12000);
+          } else if (type === "slow") {
+            powerups.slowUntil = Math.max(powerups.slowUntil, t + 9000);
+          } else if (type === "multiball") {
+            powerups.multiballUntil = Math.max(powerups.multiballUntil, t + 11000);
+            spawnExtraBalls(2);
+          } else if (type === "life") {
+            state.lives += 1;
+            setHud();
+          }
+        }
+
+        function spawnExtraBalls(count) {
+          const activeBalls = balls.filter((b) => b.active && !b.stuck);
+          const src = activeBalls[0];
+          if (!src) return;
+          let created = 0;
+          for (const b of balls) {
+            if (created >= count) break;
+            if (b.active && b !== src) continue;
+          }
+          // Ensure we have at least 3 balls allocated.
+          while (balls.length < 3) {
+            balls.push({
+              x: src.x,
+              y: src.y,
+              r: src.r,
+              vx: 0,
+              vy: 0,
+              baseSpeed: src.baseSpeed,
+              stuck: false,
+              spin: 0,
+              active: false,
+            });
+          }
+          for (const b of balls) {
+            if (created >= count) break;
+            if (b === src) continue;
+            if (b.active) continue;
+            b.active = true;
+            b.stuck = false;
+            b.r = src.r;
+            b.x = src.x;
+            b.y = src.y;
+            const angle = rand((-Math.PI * 3) / 4, (-Math.PI * 1) / 4) + rand(-0.35, 0.35);
+            const speed = Math.max(300, Math.hypot(src.vx, src.vy));
+            b.vx = Math.cos(angle) * speed;
+            b.vy = Math.sin(angle) * speed;
+            b.spin = src.spin * 0.6;
+            created++;
+          }
+        }
+
         function step(dt) {
+          const t = nowMs();
+
+          // Apply active powerups to paddle/ball speed.
+          const expandOn = t < powerups.expandUntil;
+          const slowOn = t < powerups.slowUntil;
+
+          if (!powerups.originalPaddleW) powerups.originalPaddleW = paddle.w;
+          const targetW = clamp((expandOn ? powerups.originalPaddleW * 1.35 : powerups.originalPaddleW) * 1.0, 92, 220);
+          paddle.w += (targetW - paddle.w) * (1 - Math.pow(1 - 0.2, dt * 60));
+
           const follow = 0.26;
           paddle.x += (paddle.targetX - paddle.x) * (1 - Math.pow(1 - follow, dt * 60));
           paddle.x = clamp(paddle.x, paddle.w / 2 + 8, world.w - paddle.w / 2 - 8);
 
-          if (ball.stuck) {
+          if (balls.some((b) => b.active && b.stuck)) {
             attachBallToPaddle();
-            return;
           }
 
-          const speed = Math.hypot(ball.vx, ball.vy);
-          const spinCurve = clamp(ball.spin, -0.35, 0.35);
-          const curved = spinCurve * 0.75;
-          const nx = ball.vx / (speed || 1);
-          const ny = ball.vy / (speed || 1);
-          const cx = -ny * curved;
-          const cy = nx * curved;
-
-          ball.vx += cx * dt * 180;
-          ball.vy += cy * dt * 180;
-
-          ball.x += ball.vx * dt;
-          ball.y += ball.vy * dt;
-
-          if (ball.x - ball.r < 0) {
-            ball.x = ball.r;
-            ball.vx = Math.abs(ball.vx);
-          } else if (ball.x + ball.r > world.w) {
-            ball.x = world.w - ball.r;
-            ball.vx = -Math.abs(ball.vx);
+          // Update falling drops.
+          for (const d of powerups.drops) {
+            if (!d.alive) continue;
+            d.y += d.vy * dt;
+            const halfW = paddle.w / 2;
+            const left = paddle.x - halfW;
+            const right = paddle.x + halfW;
+            const top = paddle.y - paddle.h / 2;
+            const bottom = paddle.y + paddle.h / 2;
+            const hitX = clamp(d.x, left, right);
+            const hitY = clamp(d.y, top, bottom);
+            const dx = d.x - hitX;
+            const dy = d.y - hitY;
+            if (dx * dx + dy * dy <= d.r * d.r) {
+              d.alive = false;
+              applyDrop(d.type);
+            } else if (d.y - d.r > world.h + 30) {
+              d.alive = false;
+            }
           }
 
-          if (ball.y - ball.r < 0) {
-            ball.y = ball.r;
-            ball.vy = Math.abs(ball.vy);
+          let anyBallMoving = false;
+          let lostAny = false;
+          for (const b of balls) {
+            if (!b.active) continue;
+            if (b.stuck) continue;
+            anyBallMoving = true;
+
+            const speed = Math.hypot(b.vx, b.vy);
+            const spinCurve = clamp(b.spin, -0.35, 0.35);
+            const curved = spinCurve * 0.75;
+            const nx = b.vx / (speed || 1);
+            const ny = b.vy / (speed || 1);
+            const cx = -ny * curved;
+            const cy = nx * curved;
+
+            const slowMul = slowOn ? 0.72 : 1;
+            b.vx += cx * dt * 180;
+            b.vy += cy * dt * 180;
+
+            b.x += b.vx * dt * slowMul;
+            b.y += b.vy * dt * slowMul;
+
+            if (b.x - b.r < 0) {
+              b.x = b.r;
+              b.vx = Math.abs(b.vx);
+            } else if (b.x + b.r > world.w) {
+              b.x = world.w - b.r;
+              b.vx = -Math.abs(b.vx);
+            }
+
+            if (b.y - b.r < 0) {
+              b.y = b.r;
+              b.vy = Math.abs(b.vy);
+            }
+
+            reflectBallOnPaddle(b);
+
+            for (const br of bricks.items) {
+              if (!br.alive) continue;
+              if (hitBrick(b, br)) break;
+            }
+
+            if (b.y - b.r > world.h + 40) {
+              b.active = false;
+              lostAny = true;
+            }
           }
 
-          reflectBallOnPaddle();
+          // If all balls are lost, lose a life.
+          if (lostAny && !anyBallMoving && balls.every((b) => !b.active || b.stuck)) loseLife();
 
-          for (const b of bricks.items) {
-            if (!b.alive) continue;
-            if (hitBrick(b)) break;
+          // Keep at least one ball allocated & active when awaiting release.
+          if (!balls.some((b) => b.active)) {
+            balls[0].active = true;
+            balls[0].stuck = true;
           }
 
-          if (ball.y - ball.r > world.h + 40) loseLife();
           if (remainingBricks() === 0) nextLevel();
         }
 
@@ -550,13 +720,17 @@
           ctx.stroke();
           ctx.restore();
 
-          const glow = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, ball.r * 7);
-          glow.addColorStop(0, "rgba(103,208,255,0.26)");
-          glow.addColorStop(1, "rgba(103,208,255,0.00)");
-          ctx.fillStyle = glow;
-          ctx.beginPath();
-          ctx.arc(ball.x, ball.y, ball.r * 7, 0, Math.PI * 2);
-          ctx.fill();
+          // Ball glows
+          for (const b of balls) {
+            if (!b.active) continue;
+            const glow = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 7);
+            glow.addColorStop(0, "rgba(103,208,255,0.26)");
+            glow.addColorStop(1, "rgba(103,208,255,0.00)");
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r * 7, 0, Math.PI * 2);
+            ctx.fill();
+          }
 
           for (const b of bricks.items) {
             if (!b.alive) continue;
@@ -612,17 +786,69 @@
           ctx.fill();
           ctx.restore();
 
+          // Drops
           ctx.save();
-          ctx.fillStyle = "white";
-          ctx.beginPath();
-          ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.globalAlpha = 0.25;
-          ctx.fillStyle = "#67d0ff";
-          ctx.beginPath();
-          ctx.arc(ball.x - ball.r * 0.25, ball.y - ball.r * 0.35, ball.r * 0.6, 0, Math.PI * 2);
-          ctx.fill();
+          for (const d of powerups.drops) {
+            if (!d.alive) continue;
+            const color =
+              d.type === "expand"
+                ? "#83f2c4"
+                : d.type === "slow"
+                  ? "#67d0ff"
+                  : d.type === "multiball"
+                    ? "#b392ff"
+                    : "#ffd36a";
+            ctx.globalAlpha = 0.92;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.22;
+            ctx.fillStyle = "white";
+            ctx.beginPath();
+            ctx.arc(d.x - d.r * 0.25, d.y - d.r * 0.35, d.r * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+          }
           ctx.restore();
+
+          // Balls
+          for (const b of balls) {
+            if (!b.active) continue;
+            ctx.save();
+            ctx.fillStyle = "white";
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.25;
+            ctx.fillStyle = "#67d0ff";
+            ctx.beginPath();
+            ctx.arc(b.x - b.r * 0.25, b.y - b.r * 0.35, b.r * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
+          // Active effect label
+          const t = nowMs();
+          const labels = [];
+          if (t < powerups.expandUntil) labels.push("EXPAND");
+          if (t < powerups.slowUntil) labels.push("SLOW");
+          if (t < powerups.multiballUntil) labels.push("MULTI");
+          if (labels.length) {
+            ctx.save();
+            ctx.globalAlpha = 0.92;
+            ctx.fillStyle = "rgba(0,0,0,0.32)";
+            ctx.strokeStyle = "rgba(255,255,255,0.16)";
+            ctx.lineWidth = 1;
+            roundRect(ctx, world.w - 12 - 110, 14, 110, 32, 12);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "rgba(255,255,255,0.92)";
+            ctx.font = `700 ${Math.floor(12 * world.scale)}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(labels.join(" "), world.w - 12 - 55, 30);
+            ctx.restore();
+          }
 
           if (!state.running || state.paused || state.awaitingRelease) {
             ctx.save();
@@ -712,7 +938,7 @@
             return;
           }
           startGameIfNeeded();
-          if (ball.stuck) releaseBall();
+          if (balls.some((b) => b.active && b.stuck)) releaseBall();
         }
 
         let lastTouchEnd = 0;
