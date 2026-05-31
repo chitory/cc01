@@ -1,1 +1,763 @@
-<!-- test code. -->
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>ブロック崩し（タッチ対応）</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #070812;
+        --panel: rgba(255, 255, 255, 0.08);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.7);
+        --accent: #67d0ff;
+      }
+
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: radial-gradient(1200px 800px at 50% -10%, #18244a 0%, var(--bg) 55%, #04040a 100%);
+        color: var(--text);
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Segoe UI",
+          sans-serif;
+        overflow: hidden;
+        touch-action: none;
+      }
+
+      #wrap {
+        position: fixed;
+        inset: 0;
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+          env(safe-area-inset-left);
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 10px;
+      }
+
+      header,
+      footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px;
+        margin: 0 10px;
+        border-radius: 14px;
+        background: var(--panel);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        user-select: none;
+      }
+
+      header {
+        margin-top: 10px;
+      }
+
+      footer {
+        margin-bottom: 10px;
+        gap: 10px;
+      }
+
+      .hud {
+        display: flex;
+        gap: 12px;
+        font-variant-numeric: tabular-nums;
+        flex-wrap: wrap;
+      }
+
+      .hud b {
+        color: white;
+      }
+
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .btns {
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        appearance: none;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        padding: 10px 12px;
+        border-radius: 12px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      #stage {
+        position: relative;
+        margin: 0 10px;
+        border-radius: 16px;
+        overflow: hidden;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02));
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      #overlay {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+      }
+
+      #card {
+        width: min(520px, 92%);
+        padding: 16px 16px 14px;
+        border-radius: 16px;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }
+
+      #title {
+        font-size: 18px;
+        font-weight: 800;
+        margin: 0 0 6px;
+      }
+
+      #desc {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.45;
+        font-size: 13px;
+      }
+
+      #desc code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <header>
+        <div class="hud">
+          <div>スコア: <b id="score">0</b></div>
+          <div>残機: <b id="lives">3</b></div>
+          <div>レベル: <b id="level">1</b></div>
+        </div>
+        <div class="hint">ドラッグでパドル移動 / タップで開始・リリース</div>
+      </header>
+
+      <main id="stage">
+        <canvas id="c" aria-label="ブロック崩しキャンバス"></canvas>
+        <div id="overlay" aria-hidden="true">
+          <div id="card">
+            <p id="title">ブロック崩し</p>
+            <p id="desc">
+              画面をドラッグしてパドル操作。<br />
+              <code>タップ</code>で開始・ボールのリリース、<code>二本指タップ</code>で一時停止。<br />
+              ブロックを全部壊すと次のレベルへ。
+            </p>
+          </div>
+        </div>
+      </main>
+
+      <footer>
+        <div class="btns">
+          <button id="btnStart" type="button">開始 / リリース</button>
+          <button id="btnPause" type="button">一時停止</button>
+          <button id="btnReset" type="button">リセット</button>
+        </div>
+        <div class="hint">iPhone: Safariで全画面表示して遊べます</div>
+      </footer>
+    </div>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const canvas = document.getElementById("c");
+        const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
+        const stage = document.getElementById("stage");
+        const overlay = document.getElementById("overlay");
+
+        const scoreEl = document.getElementById("score");
+        const livesEl = document.getElementById("lives");
+        const levelEl = document.getElementById("level");
+
+        const btnStart = document.getElementById("btnStart");
+        const btnPause = document.getElementById("btnPause");
+        const btnReset = document.getElementById("btnReset");
+
+        const DPR_MAX = 2.5;
+
+        const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+        const rand = (a, b) => a + Math.random() * (b - a);
+
+        const state = {
+          running: false,
+          paused: false,
+          awaitingRelease: true,
+          score: 0,
+          lives: 3,
+          level: 1,
+          lastTs: 0,
+          activePointerId: null,
+          pointerDown: false,
+          pointerX: 0,
+          pointerDownX: 0,
+          pointerDownY: 0,
+          pointerDownAt: 0,
+          pointerMoved: false,
+          twoFingerTapArmed: false,
+        };
+
+        const world = {
+          w: 1,
+          h: 1,
+          scale: 1,
+        };
+
+        const paddle = {
+          x: 0,
+          y: 0,
+          w: 120,
+          h: 14,
+          rx: 10,
+          targetX: 0,
+          speed: 28,
+        };
+
+        const ball = {
+          x: 0,
+          y: 0,
+          r: 8,
+          vx: 0,
+          vy: 0,
+          baseSpeed: 520,
+          stuck: true,
+          spin: 0,
+        };
+
+        const bricks = {
+          cols: 9,
+          rows: 6,
+          gap: 8,
+          top: 70,
+          height: 20,
+          paddingX: 18,
+          paddingY: 16,
+          items: [],
+        };
+
+        function resize() {
+          const rect = stage.getBoundingClientRect();
+          const dpr = Math.min(DPR_MAX, window.devicePixelRatio || 1);
+          canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+          canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+          canvas.style.width = `${rect.width}px`;
+          canvas.style.height = `${rect.height}px`;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          world.w = rect.width;
+          world.h = rect.height;
+          world.scale = Math.min(1.15, Math.max(0.85, rect.width / 420));
+
+          paddle.w = clamp(120 * world.scale, 92, 168);
+          paddle.h = clamp(14 * world.scale, 12, 18);
+          paddle.rx = paddle.h * 0.6;
+          paddle.y = world.h - 52 * world.scale;
+
+          ball.r = clamp(8 * world.scale, 7, 11);
+          bricks.top = 64 * world.scale;
+          bricks.height = clamp(20 * world.scale, 18, 26);
+          bricks.gap = clamp(8 * world.scale, 6, 10);
+          bricks.paddingX = clamp(18 * world.scale, 12, 22);
+
+          paddle.x = clamp(paddle.x || world.w / 2, paddle.w / 2 + 8, world.w - paddle.w / 2 - 8);
+          paddle.targetX = paddle.x;
+          if (ball.stuck) attachBallToPaddle();
+        }
+
+        function attachBallToPaddle() {
+          ball.x = paddle.x;
+          ball.y = paddle.y - paddle.h / 2 - ball.r - 2;
+        }
+
+        function setHud() {
+          scoreEl.textContent = `${state.score}`;
+          livesEl.textContent = `${state.lives}`;
+          levelEl.textContent = `${state.level}`;
+        }
+
+        function showOverlay(show) {
+          overlay.style.opacity = show ? "1" : "0";
+          overlay.style.transition = "opacity 180ms ease";
+        }
+
+        function resetBallAndPaddle() {
+          paddle.x = world.w / 2;
+          paddle.targetX = paddle.x;
+          ball.vx = 0;
+          ball.vy = 0;
+          ball.spin = 0;
+          ball.stuck = true;
+          state.awaitingRelease = true;
+          attachBallToPaddle();
+        }
+
+        function buildBricks() {
+          bricks.items = [];
+          const maxW = world.w - bricks.paddingX * 2;
+          const brickW = (maxW - bricks.gap * (bricks.cols - 1)) / bricks.cols;
+          const brickH = bricks.height;
+          const y0 = bricks.top;
+          const palette = [
+            "#67d0ff",
+            "#83f2c4",
+            "#ffd36a",
+            "#ff7aa2",
+            "#b392ff",
+            "#56ffa5",
+            "#ff9c5a",
+          ];
+
+          for (let r = 0; r < bricks.rows; r++) {
+            for (let c = 0; c < bricks.cols; c++) {
+              const x = bricks.paddingX + c * (brickW + bricks.gap);
+              const y = y0 + r * (brickH + bricks.gap);
+              const hp = 1 + Math.floor((state.level - 1 + r) / 4);
+              const color = palette[(r + c + state.level) % palette.length];
+              bricks.items.push({
+                x,
+                y,
+                w: brickW,
+                h: brickH,
+                hp,
+                color,
+                alive: true,
+              });
+            }
+          }
+        }
+
+        function startGameIfNeeded() {
+          if (!state.running) {
+            state.running = true;
+            state.paused = false;
+            showOverlay(false);
+            state.lastTs = performance.now();
+            requestAnimationFrame(tick);
+          }
+        }
+
+        function togglePause() {
+          if (!state.running) return;
+          state.paused = !state.paused;
+          if (!state.paused) {
+            state.lastTs = performance.now();
+            requestAnimationFrame(tick);
+          }
+          showOverlay(state.paused);
+        }
+
+        function releaseBall() {
+          if (!state.running) startGameIfNeeded();
+          if (!ball.stuck) return;
+          ball.stuck = false;
+          state.awaitingRelease = false;
+
+          const speed = ball.baseSpeed * (0.82 + 0.04 * Math.min(8, state.level));
+          const angle = rand((-Math.PI * 3) / 4, (-Math.PI * 1) / 4);
+          ball.vx = Math.cos(angle) * speed;
+          ball.vy = Math.sin(angle) * speed;
+        }
+
+        function resetAll() {
+          state.running = false;
+          state.paused = false;
+          state.awaitingRelease = true;
+          state.score = 0;
+          state.lives = 3;
+          state.level = 1;
+          setHud();
+          resize();
+          buildBricks();
+          resetBallAndPaddle();
+          showOverlay(true);
+          draw(performance.now(), 0);
+        }
+
+        function nextLevel() {
+          state.level += 1;
+          setHud();
+          buildBricks();
+          resetBallAndPaddle();
+          showOverlay(true);
+        }
+
+        function loseLife() {
+          state.lives -= 1;
+          setHud();
+          if (state.lives <= 0) {
+            state.running = false;
+            state.paused = false;
+            showOverlay(true);
+            return;
+          }
+          resetBallAndPaddle();
+          showOverlay(true);
+        }
+
+        function remainingBricks() {
+          let alive = 0;
+          for (const b of bricks.items) if (b.alive) alive++;
+          return alive;
+        }
+
+        function reflectBallOnPaddle() {
+          const halfW = paddle.w / 2;
+          const left = paddle.x - halfW;
+          const right = paddle.x + halfW;
+          const top = paddle.y - paddle.h / 2;
+          const bottom = paddle.y + paddle.h / 2;
+
+          const nearestX = clamp(ball.x, left, right);
+          const nearestY = clamp(ball.y, top, bottom);
+          const dx = ball.x - nearestX;
+          const dy = ball.y - nearestY;
+          if (dx * dx + dy * dy > ball.r * ball.r) return false;
+
+          const hitPos = clamp((ball.x - paddle.x) / halfW, -1, 1);
+          const speed = Math.hypot(ball.vx, ball.vy);
+          const angle = (-Math.PI / 2) + hitPos * (Math.PI * 0.38);
+
+          const paddleVel = clamp((paddle.x - paddle.targetX) * 10, -600, 600);
+          ball.spin = clamp(ball.spin + paddleVel * 0.0006, -0.35, 0.35);
+
+          const outSpeed = Math.max(300, speed);
+          ball.vx = Math.cos(angle) * outSpeed + paddleVel * 0.22;
+          ball.vy = Math.sin(angle) * outSpeed;
+
+          ball.y = top - ball.r - 0.5;
+          return true;
+        }
+
+        function hitBrick(brick) {
+          const nearestX = clamp(ball.x, brick.x, brick.x + brick.w);
+          const nearestY = clamp(ball.y, brick.y, brick.y + brick.h);
+          const dx = ball.x - nearestX;
+          const dy = ball.y - nearestY;
+          if (dx * dx + dy * dy > ball.r * ball.r) return false;
+
+          const overlapX = Math.min(Math.abs(ball.x - brick.x), Math.abs(ball.x - (brick.x + brick.w)));
+          const overlapY = Math.min(Math.abs(ball.y - brick.y), Math.abs(ball.y - (brick.y + brick.h)));
+
+          if (overlapX < overlapY) {
+            ball.vx *= -1;
+          } else {
+            ball.vy *= -1;
+          }
+
+          brick.hp -= 1;
+          if (brick.hp <= 0) {
+            brick.alive = false;
+            state.score += 100;
+          } else {
+            state.score += 25;
+          }
+          setHud();
+          return true;
+        }
+
+        function step(dt) {
+          const follow = 0.26;
+          paddle.x += (paddle.targetX - paddle.x) * (1 - Math.pow(1 - follow, dt * 60));
+          paddle.x = clamp(paddle.x, paddle.w / 2 + 8, world.w - paddle.w / 2 - 8);
+
+          if (ball.stuck) {
+            attachBallToPaddle();
+            return;
+          }
+
+          const speed = Math.hypot(ball.vx, ball.vy);
+          const spinCurve = clamp(ball.spin, -0.35, 0.35);
+          const curved = spinCurve * 0.75;
+          const nx = ball.vx / (speed || 1);
+          const ny = ball.vy / (speed || 1);
+          const cx = -ny * curved;
+          const cy = nx * curved;
+
+          ball.vx += cx * dt * 180;
+          ball.vy += cy * dt * 180;
+
+          ball.x += ball.vx * dt;
+          ball.y += ball.vy * dt;
+
+          if (ball.x - ball.r < 0) {
+            ball.x = ball.r;
+            ball.vx = Math.abs(ball.vx);
+          } else if (ball.x + ball.r > world.w) {
+            ball.x = world.w - ball.r;
+            ball.vx = -Math.abs(ball.vx);
+          }
+
+          if (ball.y - ball.r < 0) {
+            ball.y = ball.r;
+            ball.vy = Math.abs(ball.vy);
+          }
+
+          reflectBallOnPaddle();
+
+          for (const b of bricks.items) {
+            if (!b.alive) continue;
+            if (hitBrick(b)) break;
+          }
+
+          if (ball.y - ball.r > world.h + 40) loseLife();
+          if (remainingBricks() === 0) nextLevel();
+        }
+
+        function draw(ts, dt) {
+          ctx.clearRect(0, 0, world.w, world.h);
+
+          const bgGrad = ctx.createLinearGradient(0, 0, 0, world.h);
+          bgGrad.addColorStop(0, "rgba(255,255,255,0.02)");
+          bgGrad.addColorStop(1, "rgba(255,255,255,0.00)");
+          ctx.fillStyle = bgGrad;
+          ctx.fillRect(0, 0, world.w, world.h);
+
+          const glow = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, ball.r * 7);
+          glow.addColorStop(0, "rgba(103,208,255,0.26)");
+          glow.addColorStop(1, "rgba(103,208,255,0.00)");
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(ball.x, ball.y, ball.r * 7, 0, Math.PI * 2);
+          ctx.fill();
+
+          for (const b of bricks.items) {
+            if (!b.alive) continue;
+            ctx.save();
+            const alpha = 0.88;
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = b.color;
+            roundRect(ctx, b.x, b.y, b.w, b.h, 8 * world.scale);
+            ctx.fill();
+            ctx.globalAlpha = 0.14;
+            ctx.fillStyle = "white";
+            roundRect(ctx, b.x + 1.5, b.y + 1.5, b.w - 3, b.h * 0.42, 7 * world.scale);
+            ctx.fill();
+            if (b.hp > 1) {
+              ctx.globalAlpha = 0.75;
+              ctx.fillStyle = "rgba(0,0,0,0.25)";
+              ctx.font = `${Math.floor(12 * world.scale)}px system-ui, -apple-system, sans-serif`;
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillText(`${b.hp}`, b.x + b.w / 2, b.y + b.h / 2);
+            }
+            ctx.restore();
+          }
+
+          ctx.save();
+          const shadowY = paddle.y + paddle.h / 2 + 8;
+          const shadowGrad = ctx.createRadialGradient(paddle.x, shadowY, 4, paddle.x, shadowY, paddle.w * 0.7);
+          shadowGrad.addColorStop(0, "rgba(0,0,0,0.45)");
+          shadowGrad.addColorStop(1, "rgba(0,0,0,0.0)");
+          ctx.fillStyle = shadowGrad;
+          ctx.beginPath();
+          ctx.ellipse(paddle.x, shadowY, paddle.w * 0.62, paddle.h * 0.95, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          ctx.save();
+          const pGrad = ctx.createLinearGradient(0, paddle.y - paddle.h / 2, 0, paddle.y + paddle.h / 2);
+          pGrad.addColorStop(0, "rgba(255,255,255,0.85)");
+          pGrad.addColorStop(1, "rgba(103,208,255,0.65)");
+          ctx.fillStyle = pGrad;
+          roundRect(ctx, paddle.x - paddle.w / 2, paddle.y - paddle.h / 2, paddle.w, paddle.h, paddle.rx);
+          ctx.fill();
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = "white";
+          roundRect(
+            ctx,
+            paddle.x - paddle.w / 2 + 2,
+            paddle.y - paddle.h / 2 + 2,
+            paddle.w - 4,
+            paddle.h * 0.45,
+            paddle.rx - 2,
+          );
+          ctx.fill();
+          ctx.restore();
+
+          ctx.save();
+          ctx.fillStyle = "white";
+          ctx.beginPath();
+          ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 0.25;
+          ctx.fillStyle = "#67d0ff";
+          ctx.beginPath();
+          ctx.arc(ball.x - ball.r * 0.25, ball.y - ball.r * 0.35, ball.r * 0.6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+
+          if (!state.running || state.paused || state.awaitingRelease) {
+            ctx.save();
+            ctx.globalAlpha = 0.9;
+            ctx.fillStyle = "rgba(255,255,255,0.12)";
+            ctx.strokeStyle = "rgba(255,255,255,0.18)";
+            ctx.lineWidth = 1;
+            roundRect(ctx, 14, 14, 210, 44, 14);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = "rgba(255,255,255,0.9)";
+            ctx.font = `600 ${Math.floor(12 * world.scale)}px system-ui, -apple-system, sans-serif`;
+            ctx.textBaseline = "middle";
+            ctx.fillText(state.paused ? "一時停止中（タップで再開）" : "タップで開始 / リリース", 26, 36);
+            ctx.restore();
+          }
+        }
+
+        function tick(ts) {
+          if (!state.running || state.paused) return;
+          const dt = clamp((ts - state.lastTs) / 1000, 0, 1 / 20);
+          state.lastTs = ts;
+          step(dt);
+          draw(ts, dt);
+          requestAnimationFrame(tick);
+        }
+
+        function roundRect(c, x, y, w, h, r) {
+          const rr = clamp(r, 0, Math.min(w, h) / 2);
+          c.beginPath();
+          c.moveTo(x + rr, y);
+          c.arcTo(x + w, y, x + w, y + h, rr);
+          c.arcTo(x + w, y + h, x, y + h, rr);
+          c.arcTo(x, y + h, x, y, rr);
+          c.arcTo(x, y, x + w, y, rr);
+          c.closePath();
+        }
+
+        function pointerToX(evt) {
+          const rect = canvas.getBoundingClientRect();
+          const x = (evt.clientX - rect.left) * (world.w / rect.width);
+          return clamp(x, 0, world.w);
+        }
+
+        function onPointerDown(evt) {
+          if (evt.pointerType === "mouse" && evt.button !== 0) return;
+          canvas.setPointerCapture(evt.pointerId);
+          state.activePointerId = evt.pointerId;
+          state.pointerDown = true;
+          state.pointerX = pointerToX(evt);
+          state.pointerDownX = evt.clientX;
+          state.pointerDownY = evt.clientY;
+          state.pointerDownAt = performance.now();
+          state.pointerMoved = false;
+          paddle.targetX = state.pointerX;
+          showOverlay(false);
+        }
+
+        function onPointerMove(evt) {
+          if (!state.pointerDown) return;
+          if (state.activePointerId !== evt.pointerId) return;
+          state.pointerX = pointerToX(evt);
+          paddle.targetX = state.pointerX;
+          const dx = evt.clientX - state.pointerDownX;
+          const dy = evt.clientY - state.pointerDownY;
+          if (dx * dx + dy * dy > 12 * 12) state.pointerMoved = true;
+        }
+
+        function onPointerUp(evt) {
+          if (state.activePointerId !== evt.pointerId) return;
+          state.pointerDown = false;
+          state.activePointerId = null;
+          const elapsed = performance.now() - state.pointerDownAt;
+          if (!state.pointerMoved && elapsed < 280) onTapAction();
+        }
+
+        function onTapAction() {
+          if (state.paused) {
+            togglePause();
+            return;
+          }
+          startGameIfNeeded();
+          if (ball.stuck) releaseBall();
+        }
+
+        let lastTouchEnd = 0;
+        function onTouchEnd(evt) {
+          const now = performance.now();
+          if (now - lastTouchEnd < 320) evt.preventDefault();
+          lastTouchEnd = now;
+        }
+
+        function onTouchStart(evt) {
+          if (evt.touches && evt.touches.length >= 2) {
+            state.twoFingerTapArmed = true;
+            setTimeout(() => {
+              state.twoFingerTapArmed = false;
+            }, 250);
+          }
+        }
+
+        function onTouchCancel() {
+          state.twoFingerTapArmed = false;
+        }
+
+        function onTouchEndDetectPause(evt) {
+          if (state.twoFingerTapArmed) {
+            state.twoFingerTapArmed = false;
+            togglePause();
+            evt.preventDefault();
+          }
+        }
+
+        btnStart.addEventListener("click", () => onTapAction(), { passive: true });
+        btnPause.addEventListener("click", () => togglePause(), { passive: true });
+        btnReset.addEventListener("click", () => resetAll(), { passive: true });
+
+        canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
+        canvas.addEventListener("pointermove", onPointerMove, { passive: false });
+        canvas.addEventListener("pointerup", onPointerUp, { passive: true });
+        canvas.addEventListener("pointercancel", onPointerUp, { passive: true });
+
+        canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+        canvas.addEventListener("touchend", onTouchEndDetectPause, { passive: false });
+        canvas.addEventListener("touchcancel", onTouchCancel, { passive: true });
+        document.addEventListener("touchend", onTouchEnd, { passive: false });
+
+        window.addEventListener("resize", () => {
+          resize();
+          buildBricks();
+          draw(performance.now(), 0);
+        });
+
+        setHud();
+        resize();
+        buildBricks();
+        resetBallAndPaddle();
+        showOverlay(true);
+        draw(performance.now(), 0);
+      })();
+    </script>
+  </body>
+</html>
