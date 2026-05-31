@@ -39,16 +39,15 @@
         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
           env(safe-area-inset-left);
         display: grid;
-        grid-template-rows: auto 1fr auto;
-        gap: 10px;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
       }
 
-      header,
-      footer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 10px 12px;
+      header {
+        display: grid;
+        grid-template-rows: auto auto;
+        gap: 8px;
+        padding: 10px 12px 10px;
         margin: 0 10px;
         border-radius: 14px;
         background: var(--panel);
@@ -61,30 +60,21 @@
         margin-top: 10px;
       }
 
-      footer {
-        margin-bottom: 10px;
-        gap: 10px;
-      }
-
       .hud {
-        display: flex;
-        gap: 12px;
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
         font-variant-numeric: tabular-nums;
-        flex-wrap: wrap;
       }
 
       .hud b {
         color: white;
       }
 
-      .hint {
-        font-size: 12px;
-        color: var(--muted);
-      }
-
       .btns {
         display: flex;
         gap: 8px;
+        flex-wrap: wrap;
       }
 
       button {
@@ -92,12 +82,13 @@
         border: 1px solid rgba(255, 255, 255, 0.16);
         background: rgba(255, 255, 255, 0.06);
         color: var(--text);
-        padding: 10px 12px;
+        padding: 8px 10px;
         border-radius: 12px;
         font-weight: 600;
         letter-spacing: 0.02em;
         cursor: pointer;
         user-select: none;
+        line-height: 1;
       }
 
       button:active {
@@ -164,7 +155,11 @@
           <div>残機: <b id="lives">3</b></div>
           <div>レベル: <b id="level">1</b></div>
         </div>
-        <div class="hint">ドラッグでパドル移動 / タップで開始・リリース</div>
+        <div class="btns" aria-label="操作">
+          <button id="btnStart" type="button">開始 / リリース</button>
+          <button id="btnPause" type="button">一時停止</button>
+          <button id="btnReset" type="button">リセット</button>
+        </div>
       </header>
 
       <main id="stage">
@@ -180,15 +175,6 @@
           </div>
         </div>
       </main>
-
-      <footer>
-        <div class="btns">
-          <button id="btnStart" type="button">開始 / リリース</button>
-          <button id="btnPause" type="button">一時停止</button>
-          <button id="btnReset" type="button">リセット</button>
-        </div>
-        <div class="hint">iPhone: Safariで全画面表示して遊べます</div>
-      </footer>
     </div>
 
     <script>
@@ -228,6 +214,7 @@
           pointerDownY: 0,
           pointerDownAt: 0,
           pointerMoved: false,
+          pointerStartedInTouchZone: false,
           twoFingerTapArmed: false,
         };
 
@@ -235,6 +222,7 @@
           w: 1,
           h: 1,
           scale: 1,
+          touchZoneH: 0,
         };
 
         const paddle = {
@@ -280,11 +268,12 @@
           world.w = rect.width;
           world.h = rect.height;
           world.scale = Math.min(1.15, Math.max(0.85, rect.width / 420));
+          world.touchZoneH = clamp(104 * world.scale, 92, 128);
 
           paddle.w = clamp(120 * world.scale, 92, 168);
           paddle.h = clamp(14 * world.scale, 12, 18);
           paddle.rx = paddle.h * 0.6;
-          paddle.y = world.h - 52 * world.scale;
+          paddle.y = world.h - world.touchZoneH - 22 * world.scale;
 
           ball.r = clamp(8 * world.scale, 7, 11);
           bricks.top = 64 * world.scale;
@@ -545,6 +534,22 @@
           ctx.fillStyle = bgGrad;
           ctx.fillRect(0, 0, world.w, world.h);
 
+          // Touch zone (below paddle) to keep finger away from playfield
+          ctx.save();
+          const tzY = world.h - world.touchZoneH;
+          const tzGrad = ctx.createLinearGradient(0, tzY, 0, world.h);
+          tzGrad.addColorStop(0, "rgba(255,255,255,0.02)");
+          tzGrad.addColorStop(1, "rgba(0,0,0,0.22)");
+          ctx.fillStyle = tzGrad;
+          ctx.fillRect(0, tzY, world.w, world.touchZoneH);
+          ctx.strokeStyle = "rgba(255,255,255,0.10)";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, tzY + 0.5);
+          ctx.lineTo(world.w, tzY + 0.5);
+          ctx.stroke();
+          ctx.restore();
+
           const glow = ctx.createRadialGradient(ball.x, ball.y, 0, ball.x, ball.y, ball.r * 7);
           glow.addColorStop(0, "rgba(103,208,255,0.26)");
           glow.addColorStop(1, "rgba(103,208,255,0.00)");
@@ -662,6 +667,12 @@
           return clamp(x, 0, world.w);
         }
 
+        function pointerIsInTouchZone(evt) {
+          const rect = canvas.getBoundingClientRect();
+          const y = (evt.clientY - rect.top) * (world.h / rect.height);
+          return y >= world.h - world.touchZoneH - 8;
+        }
+
         function onPointerDown(evt) {
           if (evt.pointerType === "mouse" && evt.button !== 0) return;
           canvas.setPointerCapture(evt.pointerId);
@@ -672,6 +683,7 @@
           state.pointerDownY = evt.clientY;
           state.pointerDownAt = performance.now();
           state.pointerMoved = false;
+          state.pointerStartedInTouchZone = pointerIsInTouchZone(evt);
           paddle.targetX = state.pointerX;
           showOverlay(false);
         }
@@ -691,7 +703,7 @@
           state.pointerDown = false;
           state.activePointerId = null;
           const elapsed = performance.now() - state.pointerDownAt;
-          if (!state.pointerMoved && elapsed < 280) onTapAction();
+          if (state.pointerStartedInTouchZone && !state.pointerMoved && elapsed < 280) onTapAction();
         }
 
         function onTapAction() {
